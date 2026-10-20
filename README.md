@@ -1,4 +1,4 @@
-This is mostly just a PWA I needed for something, and needed on github for pages to be able to install.
+This is mostly just a PWA I needed for something, and needed on github pages to be able to install on my phone. To be honest, probably not something useful to most people (It's setup as a BYO Bible system). AI generated explanation below (in case someone else finds things useful.):
 
 
 
