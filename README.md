@@ -1,3 +1,7 @@
+This is mostly just a PWA I needed for something, and needed on github for pages to be able to install.
+
+
+
 # 聖書 Reader
 
 A reader for a Japanese Bible text file, one chapter per page, in the style of Readle:
