@@ -1,0 +1,19 @@
+{
+ "format": "jm-shards-1",
+ "shards": 96,
+ "hash": "fnv1a-utf16",
+ "sources": {
+  "JMdict": {
+   "jmdict.version": "1.08",
+   "jmdict.url": "http://www.csse.monash.edu.au/~jwb/edict.html"
+  },
+  "JMnedict": {
+   "jmnedict.version": "1.08",
+   "jmnedict.url": "https://www.edrdg.org/enamdict/enamdict_doc.html",
+   "jmnedict.date": "2020-05-29"
+  },
+  "JLPT": "yomitan-jlpt-vocab (via Furifont)"
+ },
+ "entries": 191541,
+ "names": 0
+}

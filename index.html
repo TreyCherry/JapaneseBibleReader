@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>聖書 Reader</title>
+<meta name="description" content="Read the Japanese Bible chapter by chapter with furigana, tap-to-define words and chapter vocabulary.">
+<meta name="theme-color" content="#141819">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="preload" href="fonts/FurifontSansVF.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- Import: first run, or loading a different file -->
+  <section id="view-import" class="view" hidden>
+    <div class="import-wrap">
+      <p class="eyebrow">Japanese Bible Reader</p>
+      <h1 class="ja import-title">聖書を読む</h1>
+      <p class="lede">Load your Japanese Bible text file to begin. It's read on this device and stored here, so it works offline afterwards.</p>
+      <label class="drop" id="drop">
+        <input type="file" id="file-input" accept=".txt,text/plain">
+        <span class="drop-main">Choose the text file</span>
+        <span class="drop-sub">or drop it here · UTF-8, UTF-16 or Shift_JIS</span>
+      </label>
+      <div class="format">
+        <p class="format-label">Expected format, one verse per line</p>
+        <pre class="ja">Gen 1:1 初めに、神は天地を創造された。
+Gen 1:2 地は混沌であって、…</pre>
+      </div>
+      <div id="import-status" class="status" hidden></div>
+      <button id="import-cancel" class="btn ghost" type="button" hidden>Back to library</button>
+    </div>
+  </section>
+
+  <!-- Library: books and chapters -->
+  <section id="view-library" class="view" hidden>
+    <header class="lib-head">
+      <div>
+        <p class="eyebrow">Japanese Bible Reader</p>
+        <h1 class="ja lib-title">聖書</h1>
+      </div>
+      <button class="icon-btn" id="lib-settings" type="button" aria-label="Settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+      </button>
+    </header>
+    <div id="continue" hidden></div>
+    <div class="seg" role="tablist" aria-label="Testament">
+      <button role="tab" class="seg-btn on" data-t="OT" id="seg-ot" type="button"><span class="ja">旧約</span> Old Testament</button>
+      <button role="tab" class="seg-btn" data-t="NT" id="seg-nt" type="button"><span class="ja">新約</span> New Testament</button>
+    </div>
+    <ul id="book-list" class="book-list"></ul>
+  </section>
+
+  <!-- Reader -->
+  <section id="view-reader" class="view reader" hidden>
+    <header class="topbar">
+      <button class="icon-btn" id="back" type="button" aria-label="Back to books">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+      </button>
+      <button class="pill" id="mark-read" type="button" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+        <span>Mark as read</span>
+      </button>
+      <button class="icon-btn" id="reader-settings" type="button" aria-label="Settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+      </button>
+    </header>
+
+    <div id="hero" class="hero" aria-live="polite"></div>
+
+    <nav class="tabs" role="tablist">
+      <button role="tab" class="tab on" id="tab-story" data-tab="story" type="button">Story</button>
+      <button role="tab" class="tab" id="tab-vocab" data-tab="vocab" type="button">Vocabulary <span id="vocab-count" class="count"></span></button>
+    </nav>
+
+    <main id="scroller" class="scroller">
+      <div id="panel-story" class="panel">
+        <div class="story-head">
+          <h2 id="story-title" class="ja story-title"></h2>
+          <p id="story-sub" class="story-sub"></p>
+        </div>
+        <div id="analyzer-note" class="note" hidden></div>
+        <div id="text" class="text ja" lang="ja"></div>
+        <nav class="chapter-nav">
+          <button class="btn ghost" id="prev-ch" type="button">← <span></span></button>
+          <button class="btn" id="next-ch" type="button"><span></span> →</button>
+        </nav>
+      </div>
+      <div id="panel-vocab" class="panel" hidden>
+        <div class="vocab-tools">
+          <div class="seg small" role="group" aria-label="Sort">
+            <button class="seg-btn on" data-sort="order" type="button">In order</button>
+            <button class="seg-btn" data-sort="freq" type="button">Most used</button>
+          </div>
+          <label class="check"><input type="checkbox" id="vocab-names"> Names</label>
+        </div>
+        <ol id="vocab-list" class="vocab-list"></ol>
+      </div>
+    </main>
+  </section>
+
+  <!-- Settings -->
+  <dialog id="settings" class="sheet">
+    <form method="dialog" class="sheet-inner">
+      <header class="sheet-head">
+        <h2>Settings</h2>
+        <button class="icon-btn" value="close" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+
+      <fieldset>
+        <legend>Reading</legend>
+        <label class="row" for="set-size"><span>Text size</span><input type="range" id="set-size" min="16" max="34" step="1"><output id="set-size-out"></output></label>
+        <label class="row" for="set-gaps"><span>Space between words</span><input type="checkbox" id="set-gaps" class="switch"></label>
+        <label class="row" for="set-verses"><span>Verse numbers</span><input type="checkbox" id="set-verses" class="switch"></label>
+        <label class="row" for="set-lines"><span>Each verse on its own line</span><input type="checkbox" id="set-lines" class="switch"></label>
+        <label class="row" for="set-furigana"><span>Furigana</span><input type="checkbox" id="set-furigana" class="switch"></label>
+        <label class="row" for="set-theme"><span>Theme</span>
+          <select id="set-theme"><option value="system">System</option><option value="dark">Dark</option><option value="light">Light</option></select>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Offline</legend>
+        <p class="hint" id="offline-status">The app and word analyzer are saved after the first load. Dictionary entries are saved as you look them up.</p>
+        <button class="btn ghost" id="dl-dict" type="button">Save the whole dictionary (about 12 MB)</button>
+        <div class="bar" id="dl-bar" hidden><span></span></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Text</legend>
+        <p class="hint" id="source-info"></p>
+        <div class="btn-row">
+          <button class="btn ghost" id="reimport" type="button">Load a different file</button>
+          <button class="btn ghost danger" id="reset-progress" type="button">Clear reading progress</button>
+        </div>
+        <p class="hint confirm" id="reset-confirm" hidden>Tap again to clear every chapter marked as read.</p>
+      </fieldset>
+
+      <fieldset class="about">
+        <legend>About</legend>
+        <p class="hint">Furigana: Furifont (SIL Open Font License). Word analysis: kuromoji.js with IPADIC (Apache 2.0). Definitions: JMdict by the Electronic Dictionary Research and Development Group (CC BY-SA 4.0); JLPT levels from Jonathan Waller's lists via yomitan-jlpt-vocab. Licence texts are in the <code>licenses</code> folder.</p>
+      </fieldset>
+    </form>
+  </dialog>
+</div>
+
+<script src="lib/kuromoji.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
