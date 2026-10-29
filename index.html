@@ -20,21 +20,23 @@
   <!-- Import: first run, or loading a different file -->
   <section id="view-import" class="view" hidden>
     <div class="import-wrap">
-      <p class="eyebrow">Japanese Bible Reader</p>
-      <h1 class="ja import-title">聖書を読む</h1>
-      <p class="lede">Load your Japanese Bible text file to begin. It's read on this device and stored here, so it works offline afterwards.</p>
+      <p class="eyebrow" id="import-eyebrow">Japanese Bible Reader</p>
+      <h1 class="ja import-title" id="import-title">聖書を読む</h1>
+      <p class="lede" id="import-lede">Load your Japanese Bible text file to begin.</p>
       <label class="drop" id="drop">
         <input type="file" id="file-input" accept=".txt,text/plain">
-        <span class="drop-main">Choose the text file</span>
-        <span class="drop-sub">or drop it here · UTF-8, UTF-16 or Shift_JIS</span>
+        <span class="drop-main">Choose the file</span>
+        <span class="drop-sub" id="import-sub">or drop it here</span>
       </label>
       <div class="format">
-        <p class="format-label">Expected format, one verse per line</p>
-        <pre class="ja">Gen 1:1 初めに、神は天地を創造された。
-Gen 1:2 地は混沌であって、…</pre>
+        <p class="format-label" id="import-format-label">Expected format, one verse per line</p>
+        <pre class="ja" id="import-format"></pre>
       </div>
       <div id="import-status" class="status" hidden></div>
-      <button id="import-cancel" class="btn ghost" type="button" hidden>Back to library</button>
+      <div class="btn-row">
+        <button id="import-cancel" class="btn ghost" type="button" hidden>Back to library</button>
+        <button id="import-other" class="btn ghost" type="button">Load a different book instead</button>
+      </div>
     </div>
   </section>
 
@@ -51,10 +53,12 @@ Gen 1:2 地は混沌であって、…</pre>
     </header>
     <div id="continue" hidden></div>
     <div class="seg" role="tablist" aria-label="Testament">
-      <button role="tab" class="seg-btn on" data-t="OT" id="seg-ot" type="button"><span class="ja">旧約</span> Old Testament</button>
-      <button role="tab" class="seg-btn" data-t="NT" id="seg-nt" type="button"><span class="ja">新約</span> New Testament</button>
+      <button role="tab" class="seg-btn on" data-t="OT" id="seg-ot" type="button"><span class="ja">旧約</span><small>Old Testament</small></button>
+      <button role="tab" class="seg-btn" data-t="NT" id="seg-nt" type="button"><span class="ja">新約</span><small>New Testament</small></button>
+      <button role="tab" class="seg-btn" data-t="BOOK" id="seg-book" type="button"><span class="ja">本</span><small>Book</small></button>
     </div>
     <ul id="book-list" class="book-list"></ul>
+    <div id="book-panel" class="book-panel" hidden></div>
   </section>
 
   <!-- Reader -->
@@ -129,30 +133,49 @@ Gen 1:2 地は混沌であって、…</pre>
 
       <fieldset>
         <legend>Offline</legend>
+        <p class="hint" id="storage-status"></p>
+        <button class="btn ghost" id="persist" type="button" hidden>Protect this app's data</button>
         <p class="hint" id="offline-status">The app and word analyzer are saved after the first load. Dictionary entries are saved as you look them up.</p>
         <button class="btn ghost" id="dl-dict" type="button">Save the whole dictionary (about 12 MB)</button>
         <div class="bar" id="dl-bar" hidden><span></span></div>
       </fieldset>
 
       <fieldset>
-        <legend>Text</legend>
+        <legend>Bible</legend>
         <p class="hint" id="source-info"></p>
         <div class="btn-row">
-          <button class="btn ghost" id="reimport" type="button">Load a different file</button>
+          <button class="btn ghost" id="reimport" type="button">Load a different Bible file</button>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Book</legend>
+        <p class="hint ja-hint" id="book-info"></p>
+        <div class="btn-row">
+          <button class="btn ghost" id="load-book" type="button">Load a book</button>
+          <button class="btn ghost danger" id="remove-book" type="button">Remove the book</button>
+        </div>
+        <p class="hint confirm" id="remove-confirm" hidden>Tap again to remove the book and its reading progress. The Bible stays.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Progress</legend>
+        <div class="btn-row">
           <button class="btn ghost danger" id="reset-progress" type="button">Clear reading progress</button>
         </div>
-        <p class="hint confirm" id="reset-confirm" hidden>Tap again to clear every chapter marked as read.</p>
+        <p class="hint confirm" id="reset-confirm" hidden>Tap again to clear every chapter marked as read, in the Bible and the book.</p>
       </fieldset>
 
       <fieldset class="about">
         <legend>About</legend>
-        <p class="hint">Furigana: Furifont (SIL Open Font License). Word analysis: kuromoji.js with IPADIC (Apache 2.0). Definitions: JMdict by the Electronic Dictionary Research and Development Group (CC BY-SA 4.0); JLPT levels from Jonathan Waller's lists via yomitan-jlpt-vocab. Licence texts are in the <code>licenses</code> folder.</p>
+        <p class="hint">Furigana: Furifont (SIL Open Font License). Word analysis: kuromoji.js with IPADIC (Apache 2.0). Definitions: JMdict by the Electronic Dictionary Research and Development Group (CC BY-SA 4.0); JLPT levels from Jonathan Waller's lists via yomitan-jlpt-vocab. EPUB unzipping: fflate (MIT). Licence texts are in the <code>licenses</code> folder.</p>
       </fieldset>
     </form>
   </dialog>
 </div>
 
 <script src="lib/kuromoji.js"></script>
+<script src="lib/fflate.js"></script>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>

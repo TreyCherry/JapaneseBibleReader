@@ -2,7 +2,7 @@
 import { bookInfo } from './books.js';
 
 const DB_NAME = 'bible-reader';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 let dbPromise = null;
 
 function openDb() {
@@ -14,6 +14,7 @@ function openDb() {
       const db = req.result;
       if (!db.objectStoreNames.contains('chapters')) db.createObjectStore('chapters');
       if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
+      if (!db.objectStoreNames.contains('bookch')) db.createObjectStore('bookch'); // the one non-Bible book
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -53,9 +54,39 @@ export async function getChapter(book, ch) {
   return reqP(db.transaction('chapters').objectStore('chapters').get(`${book}.${ch}`));
 }
 
-export async function clearAll() {
+async function clearBible() {
   await tx('chapters', 'readwrite', s => { s.clear(); });
-  await tx('meta', 'readwrite', s => { s.clear(); });
+  await tx('meta', 'readwrite', s => { s.delete('books'); s.delete('source'); });
+}
+
+export async function getBookChapter(i) {
+  const db = await openDb();
+  return reqP(db.transaction('bookch').objectStore('bookch').get(i));
+}
+
+export async function removeBook() {
+  await tx('bookch', 'readwrite', s => { s.clear(); });
+  await tx('meta', 'readwrite', s => { s.delete('book'); });
+}
+
+// Store a parsed book (from bookparse.js), replacing any previous one. The Bible is untouched.
+export async function saveBook(book, file, onProgress = () => {}) {
+  await removeBook();
+  const BATCH = 50;
+  for (let i = 0; i < book.chapters.length; i += BATCH) {
+    await tx('bookch', 'readwrite', s => {
+      for (let j = i; j < Math.min(i + BATCH, book.chapters.length); j++) s.put(book.chapters[j], j);
+    });
+    onProgress(Math.min(1, (i + BATCH) / book.chapters.length));
+  }
+  const info = {
+    id: `${file.name}|${file.size}|${book.chars}`,
+    title: book.title, author: book.author || '', format: book.format, encoding: book.encoding || '',
+    name: file.name, size: file.size, chars: book.chars, importedAt: Date.now(),
+    chapters: book.chapters.map(c => c.title),
+  };
+  await setMeta('book', info);
+  return info;
 }
 
 // ---------- decoding ----------
@@ -116,7 +147,7 @@ export async function importBible(file, onProgress = () => {}) {
   if (!order.length) throw new Error('No verses found. Each line should start with a label like "Gen 1:1".');
   if (damage > 0.01) throw new Error(`This file looks damaged (${(damage * 100).toFixed(1)}% unreadable characters). Try the original file, or save it again as UTF-8 or UTF-16.`);
 
-  await clearAll();
+  await clearBible();
   const books = [];
   const byBook = new Map();
   for (const key of order) {
