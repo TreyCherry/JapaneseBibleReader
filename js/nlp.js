@@ -202,7 +202,7 @@ function newChunk(t) {
   return { tokens: [t], head: t.pos === '接頭詞' ? null : t, prefixOnly: t.pos === '接頭詞', suru: false, notes: [] };
 }
 
-export function groupTokens(tokens, opts = { bible: true }) {
+export function groupTokens(tokens) {
   const chunks = [];
   let cur = null;
   for (const t of tokens) {
@@ -221,9 +221,6 @@ export function groupTokens(tokens, opts = { bible: true }) {
       attach = true; // であった, である, でした ...
     } else if (t.pos === '動詞' && last.pos === '助動詞' && cur.head && cur.head.pos === '助動詞' && /^(ある|あっ)/.test(t.surface_form)) {
       attach = true; // で + あっ + た
-    } else if (t.pos === '助詞' && t.pos_detail_1 === '終助詞' && t.surface_form === 'よ' && last.pos === '動詞'
-               && /^(連用形|未然形|命令)/.test(last.conjugated_form || '')) {
-      attach = true; cur.notes.push('imperative (〜よ, command)'); // 分けよ, 現れよ: classical-style commands
     } else if (isInflectional(t, cur)) {
       attach = true;
       if (t.pos === '助動詞' && AUX_NOTES[t.basic_form]) cur.notes.push(AUX_NOTES[t.basic_form]);
@@ -251,23 +248,18 @@ export function groupTokens(tokens, opts = { bible: true }) {
       prev.notes.push(...c.notes);
     } else merged.push(c);
   }
-  return merged.map(c => finishChunk(c, opts));
+  return merged.map(finishChunk);
 }
 
 const NON_LEXICAL = new Set(['記号', '助詞', '助動詞', 'フィラー']);
 
 // Readings this Bible uses where the analyzer guesses otherwise (nouns only).
-// Bible only: applied to a noun token that is exactly this word (not a suffix or counter).
-const READING_OVERRIDES = { '主': 'シュ', '言': 'コトバ', '所': 'トコロ', '日': 'ヒ' };
+const READING_OVERRIDES = { '主': 'シュ', '言': 'コトバ' };
 
-function finishChunk(c, opts) {
+function finishChunk(c) {
   for (const t of c.tokens) {
-    if (opts.bible && t.pos === '名詞' && READING_OVERRIDES[t.surface_form] && (t.surface_form === '所' || (t.pos_detail_1 !== '接尾' && t.pos_detail_1 !== '数'))) {
-      t.reading = READING_OVERRIDES[t.surface_form];
-    }
+    if (t.pos === '名詞' && READING_OVERRIDES[t.surface_form]) t.reading = READING_OVERRIDES[t.surface_form];
   }
-  const h = c.head || c.tokens[0];
-  if (h && h.conjugated_form && h.conjugated_form.startsWith('命令') && !c.notes.length) c.notes.push('imperative (command)');
   const head = c.head || c.tokens[0];
   const surface = c.tokens.map(t => t.surface_form).join('');
   const display = withSelectors(c.tokens.flatMap(t => alignReading(t.surface_form, kataToHira(t.reading))));
@@ -301,23 +293,9 @@ export async function lemmaReading(lemma) {
   return r;
 }
 
-// Bible only: fix-ups for classical-style constructions IPADIC mis-tags.
-function fixTokens(tokens, opts) {
-  if (!opts.bible) return tokens;
-  for (let i = 1; i < tokens.length; i++) {
-    const t = tokens[i], p = tokens[i - 1];
-    // 光あれ / 大空あれ: "let there be" (imperative of ある), not the interjection あれ
-    if (t.surface_form === 'あれ' && t.pos === '感動詞' && p.pos === '名詞') {
-      Object.assign(t, { pos: '動詞', pos_detail_1: '自立', basic_form: 'ある', conjugated_form: '命令ｅ', reading: 'アレ' });
-    }
-  }
-  return tokens;
-}
-
-// opts.bible: apply the Bible-specific readings and fix-ups (off for other books)
-export async function analyzeVerse(text, opts = { bible: true }) {
+export async function analyzeVerse(text) {
   const t = await initTokenizer();
-  return groupTokens(fixTokens(t.tokenize(text), opts), opts);
+  return groupTokens(t.tokenize(text));
 }
 
 export const POS_EN = {

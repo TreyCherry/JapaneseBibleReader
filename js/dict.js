@@ -76,8 +76,7 @@ export async function lookupKey(key) {
 }
 
 // Look up several candidate keys in order; rank entries by how well they fit the reading.
-// opts.bible = false leaves out the curated Bible names (b) and Bible senses (p).
-export async function lookup(keys, readingHint, opts = { bible: true }) {
+export async function lookup(keys, readingHint) {
   const seen = new Set();
   const results = [];
   for (let ki = 0; ki < keys.length; ki++) {
@@ -88,7 +87,6 @@ export async function lookup(keys, readingHint, opts = { bible: true }) {
     for (const e of entries) {
       if (seen.has(e.id)) continue;
       seen.add(e.id);
-      if (!opts.bible && (e.b || e.p)) continue;
       let score = 0;
       if (e.b) score += 1000;
       if (e.p && readingHint && e.r && e.r.includes(readingHint)) score += 500;
