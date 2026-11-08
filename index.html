@@ -76,7 +76,14 @@
       </button>
     </header>
 
-    <div id="hero" class="hero" aria-live="polite"></div>
+    <div class="hero-wrap">
+      <div id="hero" class="hero" aria-live="polite"></div>
+      <div id="word-sheet" class="word-sheet" hidden>
+        <div id="word-sheet-body"></div>
+        <button class="btn ghost sheet-close" id="sheet-close" type="button">Close</button>
+      </div>
+    </div>
+    <div id="sheet-scrim" class="sheet-scrim" hidden></div>
 
     <nav class="tabs" role="tablist">
       <button role="tab" class="tab on" id="tab-story" data-tab="story" type="button">Story</button>

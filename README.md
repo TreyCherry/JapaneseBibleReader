@@ -4,6 +4,7 @@ A reader for a Japanese Bible text file, one chapter per page, in the style of R
 
 - Furifont draws the furigana. The word analyzer's readings pick the right furigana where a kanji has several.
 - Tap a word to see its dictionary form, reading, meanings, JLPT level, and grammar notes for the inflection, such as "passive" or "past".
+- The word strip above the text has a fixed height, so selecting or clearing a word never moves the text. It shows the word, chips and first meaning; tap it for the full entry, which opens over the text.
 - The **Vocabulary** tab lists every word in the chapter with its first meaning and how often it appears. Tap a word in the list to jump to it in the text.
 - Chapters can be marked as read, and the library shows progress for each book.
 - It's an installable PWA and works offline after the first load.
