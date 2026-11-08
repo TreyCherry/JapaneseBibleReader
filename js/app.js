@@ -481,8 +481,44 @@ function setTab(tab) {
 }
 
 // ---------- word card ----------
+// The strip above the text has a fixed height, so selecting or clearing a word never moves the text.
+// Tapping the strip opens the full entry in a sheet that lies over the text.
 function renderHeroEmpty() {
-  $('#hero').innerHTML = `<div class="hero-empty">${state.heroEmpty}<p class="hint">Tap any word to see its meaning.</p></div>`;
+  closeSheet();
+  const hero = $('#hero');
+  hero.classList.remove('has-word');
+  hero.removeAttribute('role'); hero.removeAttribute('tabindex'); hero.removeAttribute('aria-expanded');
+  hero.innerHTML = `<div class="hero-empty">${state.heroEmpty}<p class="hint">Tap any word to see its meaning.</p></div>`;
+}
+
+function renderWord(v) {
+  const hero = $('#hero');
+  hero.classList.add('has-word');
+  hero.setAttribute('role', 'button');
+  hero.setAttribute('tabindex', '0');
+  hero.setAttribute('aria-expanded', String(!$('#word-sheet').hidden));
+  hero.setAttribute('aria-label', 'Show the full dictionary entry');
+  hero.innerHTML = `<div class="strip-main">
+      <p class="strip-word">${v.word}</p>
+      <div class="strip-side">${v.reading || ''}<div class="chips strip-chips">${v.chips || ''}</div></div>
+    </div>
+    <p class="strip-first">${v.first || ''}</p>
+    <svg class="strip-more" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>`;
+  $('#word-sheet-body').innerHTML = v.full || '';
+}
+
+function openSheet() {
+  if (state.selected < 0) return;
+  $('#word-sheet').hidden = false;
+  $('#sheet-scrim').hidden = false;
+  $('#hero').setAttribute('aria-expanded', 'true');
+  $('#word-sheet').scrollTop = 0;
+}
+
+function closeSheet() {
+  $('#word-sheet').hidden = true;
+  $('#sheet-scrim').hidden = true;
+  $('#hero').setAttribute('aria-expanded', 'false');
 }
 
 function clearSelection() {
@@ -534,37 +570,40 @@ async function selectChunk(i, { scroll = false } = {}) {
   if (scroll) el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   const c = state.chunks[i];
   const myToken = state.renderToken;
-  const hero = $('#hero');
   const posEn = POS_EN[c.pos] || c.pos;
-  hero.innerHTML = `<p class="hero-word">${c.display}</p><p class="hint">Looking up…</p>`;
+  renderWord({ word: c.display, first: '<span class="muted">Looking up…</span>', full: '<p class="hint">Looking up…</p>' });
   let res;
   try { res = await lookupChunk(c); } catch { res = { entries: [], hint: null }; }
   if (state.selected !== i || myToken !== state.renderToken) return;
   const { entries, hint } = res;
   const e = entries[0];
   const notes = c.notes.map(n => `<span class="chip note">${escapeHtml(n)}</span>`).join('');
-  let html = '';
+  const v = {};
   if (e && e.b) {
-    html = `<p class="hero-word">${furiText(c.surface, null)}</p>
-      <p class="hero-reading">${escapeHtml(toRomaji(c.surface))}</p>
-      <div class="chips"><span class="chip">name</span></div>
+    v.word = furiText(c.surface, null);
+    v.reading = `<p class="hero-reading">${escapeHtml(toRomaji(c.surface))}</p>`;
+    v.chips = '<span class="chip">name</span>';
+    v.first = escapeHtml(e.b);
+    v.full = `<p class="hero-word">${v.word}</p>${v.reading}<div class="chips">${v.chips}</div>
       <ol class="senses"><li>${escapeHtml(e.b)}</li></ol>`;
   } else if (e) {
     const key = c.compound && e.k && e.k.includes(c.compound) ? c.compound : c.lemma;
     const head = headwordFor(e, key);
     const rd = readingFor(e, hint);
-    const headHtml = furiText(head, rd);
-    const written = c.surface !== head ? `<p class="hero-written">As written: <span class="ja">${c.display}</span></p>` : '';
-    const isKanaHead = !/[㐀-鿿]/.test(head);
+    const isKanaHead = !/[\u3400-\u9FFF]/.test(head);
     const firstPos = e.s[0] && e.s[0][0] && e.s[0][0][0];
-    html = `<p class="hero-word">${headHtml}</p>
-      ${isKatakanaWord(head) ? `<p class="hero-reading">${escapeHtml(toRomaji(head))}</p>` : isKanaHead ? '' : `<p class="hero-reading rd-kana"><span class="ja">${escapeHtml(rd)}</span></p>`}
-      ${written}
-      <div class="chips"><span class="chip">${escapeHtml(firstPos || posEn)}</span>${e.j ? `<span class="chip jlpt">N${e.j}</span>` : ''}${notes}</div>
+    v.word = furiText(head, rd);
+    v.reading = isKatakanaWord(head) ? `<p class="hero-reading">${escapeHtml(toRomaji(head))}</p>`
+      : isKanaHead ? '' : `<p class="hero-reading rd-kana"><span class="ja">${escapeHtml(rd)}</span></p>`;
+    v.chips = `<span class="chip">${escapeHtml(firstPos || posEn)}</span>${e.j ? `<span class="chip jlpt">N${e.j}</span>` : ''}${notes}`;
+    v.first = escapeHtml(e.s[0][1].join('; '));
+    const written = c.surface !== head ? `<p class="hero-written">As written: <span class="ja">${c.display}</span></p>` : '';
+    v.full = `<p class="hero-word">${v.word}</p>${v.reading}${written}
+      <div class="chips">${v.chips}</div>
       <ol class="senses">${e.s.map(senseHtml).join('')}</ol>`;
     const alts = entries.slice(1, 3);
     if (alts.length) {
-      html += `<div class="more-entries"><span class="label">Other matches</span>${alts.map(a => {
+      v.full += `<div class="more-entries"><span class="label">Other matches</span>${alts.map(a => {
         if (a.b) return `<div class="alt">${escapeHtml(a.b)}</div>`;
         const h = headwordFor(a, key);
         return `<div class="alt"><span class="ja">${furiText(h, a.r[0])}</span><span class="alt-r">${escapeHtml(a.r[0])}</span>${escapeHtml(a.s[0][1].slice(0, 3).join('; '))}</div>`;
@@ -574,22 +613,35 @@ async function selectChunk(i, { scroll = false } = {}) {
     const why = isBible()
       ? 'Katakana words in the Bible are usually names of people or places; the romanization above may help you recognise it.'
       : 'Katakana words like this are usually names or loanwords; the romanization above may help you recognise it.';
-    html = `<p class="hero-word">${c.display}</p>
-      <p class="hero-reading">${escapeHtml(toRomaji(c.surface))}</p>
-      <div class="chips"><span class="chip">katakana</span>${notes}</div>
+    v.word = c.display;
+    v.reading = `<p class="hero-reading">${escapeHtml(toRomaji(c.surface))}</p>`;
+    v.chips = `<span class="chip">katakana</span>${notes}`;
+    v.first = '<span class="muted">Not in the dictionary</span>';
+    v.full = `<p class="hero-word">${v.word}</p>${v.reading}<div class="chips">${v.chips}</div>
       <p class="hint">Not in the dictionary. ${why}</p>`;
   } else {
-    html = `<p class="hero-word">${c.display}</p>
-      <p class="hero-reading rd-kana"><span class="ja">${escapeHtml(c.reading)}</span></p>
-      <div class="chips"><span class="chip">${escapeHtml(posEn)}</span>${notes}</div>
+    v.word = c.display;
+    v.reading = `<p class="hero-reading rd-kana"><span class="ja">${escapeHtml(c.reading)}</span></p>`;
+    v.chips = `<span class="chip">${escapeHtml(posEn)}</span>${notes}`;
+    v.first = `<span class="muted">No dictionary entry found for ${escapeHtml(c.lemma)}</span>`;
+    v.full = `<p class="hero-word">${v.word}</p>${v.reading}<div class="chips">${v.chips}</div>
       <p class="hint">No dictionary entry found for ${escapeHtml(c.lemma)}.</p>`;
   }
-  hero.innerHTML = html;
-  hero.scrollTop = 0;
+  renderWord(v);
 }
 
 function bindReader() {
   $('#back').addEventListener('click', () => { location.hash = '#/'; });
+  const hero = $('#hero');
+  hero.addEventListener('click', () => {
+    if (!hero.classList.contains('has-word')) return;
+    if ($('#word-sheet').hidden) openSheet(); else closeSheet();
+  });
+  hero.addEventListener('keydown', e => {
+    if ((e.key === 'Enter' || e.key === ' ') && hero.classList.contains('has-word')) { e.preventDefault(); hero.click(); }
+  });
+  $('#sheet-scrim').addEventListener('click', closeSheet);
+  $('#sheet-close').addEventListener('click', closeSheet);
   $('#text').addEventListener('click', e => {
     const w = e.target.closest('.w');
     if (!w) return;
@@ -619,7 +671,9 @@ function bindReader() {
   });
   document.addEventListener('keydown', e => {
     if ($('#view-reader').hidden || $('#settings').open) return;
-    if (e.key === 'Escape' && state.selected >= 0) clearSelection();
+    if (e.key !== 'Escape') return;
+    if (!$('#word-sheet').hidden) closeSheet();
+    else if (state.selected >= 0) clearSelection();
   });
 }
 

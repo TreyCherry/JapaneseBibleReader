@@ -1,6 +1,6 @@
 // Service worker: the app shell, font and analyzer are saved on install;
 // dictionary shards are saved the first time they're used (or all at once from Settings).
-const VERSION = 'v3';
+const VERSION = 'v4';
 const SHELL = `shell-${VERSION}`;
 const DICT = 'dict-jm-1';
 const PRECACHE = [
