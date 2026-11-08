@@ -1,6 +1,6 @@
 // Service worker: the app shell, font and analyzer are saved on install;
 // dictionary shards are saved the first time they're used (or all at once from Settings).
-const VERSION = 'v1';
+const VERSION = 'v3';
 const SHELL = `shell-${VERSION}`;
 const DICT = 'dict-jm-1';
 const PRECACHE = [
@@ -8,11 +8,13 @@ const PRECACHE = [
   "index.html",
   "css/app.css",
   "js/app.js",
+  "js/bookparse.js",
   "js/books.js",
   "js/dict.js",
   "js/nlp.js",
   "js/store.js",
   "lib/kuromoji.js",
+  "lib/fflate.js",
   "fonts/FurifontSansVF.woff2",
   "fonts/FurifontSansVF.ivs.json",
   "dict/manifest.json",

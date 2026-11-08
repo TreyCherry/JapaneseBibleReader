@@ -1,5 +1,6 @@
 import { bookInfo, chapterLabelJa } from './books.js';
-import { getMeta, getChapter, importBible, setMeta } from './store.js';
+import { getMeta, getChapter, importBible, getBookChapter, saveBook, removeBook } from './store.js';
+import { parseBookFile } from './bookparse.js';
 import { initTokenizer, initIvs, analyzeVerse, lemmaReading, furiText, escapeHtml, kataToHira, toRomaji, isKatakanaWord, POS_EN } from './nlp.js';
 import { initDict, lookup, downloadAll } from './dict.js';
 
@@ -10,16 +11,28 @@ const $$ = s => [...document.querySelectorAll(s)];
 const store = {
   get(k, d) { try { const v = localStorage.getItem('br.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('br.' + k, JSON.stringify(v)); } catch {} },
+  del(k) { try { localStorage.removeItem('br.' + k); } catch {} },
 };
 const DEFAULTS = { size: 22, gaps: true, verses: true, lines: false, furigana: true, theme: 'system' };
 let settings = { ...DEFAULTS, ...store.get('settings', {}) };
 let readSet = new Set(store.get('read', []));
 
+// Where you were in each text. Older versions stored only the Bible position as `last`.
+function lastBible() {
+  const l = store.get('lastBible', null) || store.get('last', null);
+  return l && l.book ? { book: l.book, ch: l.ch, t: l.t || 0 } : null;
+}
+function lastBook() { return store.get('lastBook', null); }
+
 const state = {
-  books: [], source: null, testament: 'OT', openBook: null,
-  book: null, ch: null, chunks: [], analyzed: false, selected: -1, tab: 'story',
+  books: [], source: null, book: null, // Bible books + source info; `book` = the non-Bible book's info
+  libTab: 'OT', openBook: null, importMode: 'bible',
+  kind: null, code: null, ch: null, // what's open in the reader: kind 'bible' (code, ch) or 'book' (ch = index)
+  chunks: [], selected: -1, tab: 'story', heroEmpty: '',
   vocab: [], vocabSort: 'order', vocabNames: false, renderToken: 0,
 };
+const isBible = () => state.kind === 'bible';
+const bookKey = i => `book:${state.book.id}#${i}`;
 
 // ---------- settings ----------
 function applySettings() {
@@ -39,21 +52,42 @@ function applySettings() {
 }
 function saveSettings() { store.set('settings', settings); applySettings(); }
 
+function twoTap(btn, confirmEl, action) {
+  btn.addEventListener('click', () => {
+    if (confirmEl.hidden) { confirmEl.hidden = false; return; }
+    confirmEl.hidden = true;
+    action();
+  });
+}
+
 function bindSettings() {
   $('#set-size').addEventListener('input', e => { settings.size = +e.target.value; saveSettings(); });
   for (const [id, key] of [['#set-gaps', 'gaps'], ['#set-verses', 'verses'], ['#set-lines', 'lines'], ['#set-furigana', 'furigana']]) {
     $(id).addEventListener('change', e => { settings[key] = e.target.checked; saveSettings(); });
   }
   $('#set-theme').addEventListener('change', e => { settings.theme = e.target.value; saveSettings(); });
-  const open = () => { updateSourceInfo(); $('#reset-confirm').hidden = true; $('#settings').showModal(); };
+  const open = () => {
+    updateSourceInfo();
+    $$('.confirm').forEach(c => { c.hidden = true; });
+    updateStorageStatus();
+    $('#settings').showModal();
+  };
   $('#lib-settings').addEventListener('click', open);
   $('#reader-settings').addEventListener('click', open);
   $('#settings').addEventListener('click', e => { if (e.target === $('#settings')) $('#settings').close(); });
   $('#reimport').addEventListener('click', () => { $('#settings').close(); location.hash = '#/import'; });
-  $('#reset-progress').addEventListener('click', () => {
-    if ($('#reset-confirm').hidden) { $('#reset-confirm').hidden = false; return; }
-    readSet = new Set(); store.set('read', []); $('#reset-confirm').hidden = true;
-    $('#reset-confirm').hidden = true; renderLibrary(); updateMarkRead();
+  $('#load-book').addEventListener('click', () => { $('#settings').close(); location.hash = '#/import-book'; });
+  twoTap($('#remove-book'), $('#remove-confirm'), async () => {
+    const id = state.book && state.book.id;
+    await removeBook();
+    if (id) { readSet = new Set([...readSet].filter(k => !k.startsWith(`book:${id}#`))); store.set('read', [...readSet]); }
+    store.del('lastBook');
+    state.book = null;
+    updateSourceInfo();
+    if (state.kind === 'book') location.hash = '#/'; else renderLibrary();
+  });
+  twoTap($('#reset-progress'), $('#reset-confirm'), () => {
+    readSet = new Set(); store.set('read', []); renderLibrary(); updateMarkRead();
   });
   $('#dl-dict').addEventListener('click', async () => {
     const btn = $('#dl-dict'); btn.disabled = true;
@@ -66,15 +100,49 @@ function bindSettings() {
       $('#offline-status').textContent = 'Some dictionary files could not be saved. Check the connection and try again.';
     }
     btn.disabled = false;
+    updateStorageStatus();
   });
   if (store.get('dictSaved', false)) $('#offline-status').textContent = 'The whole dictionary is saved on this device.';
+  $('#persist').addEventListener('click', async () => { await requestPersist(); updateStorageStatus(); });
 }
+
+const plural = (n, w) => `${n.toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
 
 function updateSourceInfo() {
   const s = state.source;
   $('#source-info').textContent = s
-    ? `${s.name} · ${s.chapters.toLocaleString()} chapters · ${s.verses.toLocaleString()} verses · ${s.encoding}`
-    : 'No text loaded.';
+    ? `${s.name} · ${plural(s.chapters, 'chapter')} · ${plural(s.verses, 'verse')} · ${s.encoding}`
+    : 'No Bible text loaded.';
+  const b = state.book;
+  $('#book-info').textContent = b
+    ? `${b.title}${b.author ? ' · ' + b.author : ''} · ${plural(b.chapters.length, 'chapter')} · ${b.format}`
+    : 'No book loaded.';
+  $('#load-book').textContent = b ? 'Replace the book' : 'Load a book';
+  $('#remove-book').hidden = !b;
+}
+
+// ---------- persistent storage ----------
+async function requestPersist() {
+  try {
+    if (!navigator.storage || !navigator.storage.persist) return false;
+    if (await navigator.storage.persisted()) return true;
+    return await navigator.storage.persist();
+  } catch { return false; }
+}
+
+async function updateStorageStatus() {
+  const el = $('#storage-status'), btn = $('#persist');
+  if (!navigator.storage || !navigator.storage.persisted) {
+    el.textContent = 'This browser doesn\'t report whether storage is protected.'; btn.hidden = true; return;
+  }
+  let persisted = false, usage = null;
+  try { persisted = await navigator.storage.persisted(); } catch {}
+  try { const est = await navigator.storage.estimate(); usage = est.usage; } catch {}
+  const used = usage != null ? ` Using about ${Math.max(1, Math.round(usage / 1e6))} MB.` : '';
+  el.textContent = persisted
+    ? `Protected: the browser won't clear this app's data on its own.${used}`
+    : `Not protected yet: the browser may clear this app's data if the device runs low on space.${used}`;
+  btn.hidden = persisted;
 }
 
 // ---------- routing ----------
@@ -84,18 +152,56 @@ function show(view) {
 
 async function route() {
   const h = location.hash || '#/';
-  if (!state.books.length && !h.startsWith('#/import')) { location.replace('#/import'); return; }
-  const m = /^#\/read\/([^/]+)\/(\d+)/.exec(h);
-  if (h.startsWith('#/import')) { showImport(); return; }
-  if (m) { await openChapter(decodeURIComponent(m[1]), +m[2]); return; }
+  const hasAny = state.books.length || state.book;
+  if (h.startsWith('#/import-book')) { showImport('book'); return; }
+  if (h.startsWith('#/import')) { showImport('bible'); return; }
+  if (!hasAny) { location.replace('#/import'); return; }
+  let m = /^#\/read\/([^/]+)\/(\d+)/.exec(h);
+  if (m) { await openBibleChapter(decodeURIComponent(m[1]), +m[2]); return; }
+  m = /^#\/book\/(\d+)/.exec(h);
+  if (m) { await openBookChapter(+m[1]); return; }
+  state.kind = null;
+  document.title = '聖書 Reader';
   show('library'); renderLibrary();
 }
 
 // ---------- import ----------
-function showImport() {
+const IMPORT_TEXT = {
+  bible: {
+    eyebrow: 'Japanese Bible Reader', title: '聖書を読む',
+    lede: 'Load your Japanese Bible text file. It\'s read on this device and stored here, so it works offline afterwards.',
+    sub: 'or drop it here · UTF-8, UTF-16 or Shift_JIS', accept: '.txt,text/plain',
+    formatLabel: 'Expected format, one verse per line',
+    format: 'Gen 1:1 初めに、神は天地を創造された。\nGen 1:2 地は混沌であって、…',
+    other: 'Load a different book instead',
+  },
+  book: {
+    eyebrow: 'A book beside the Bible', title: '本を読む',
+    lede: 'Load a Japanese book to read alongside the Bible. One book is kept at a time; loading another replaces it. The Bible stays as it is.',
+    sub: 'or drop it here · EPUB, or a text file (Aozora Bunko format works)', accept: '.txt,.epub,text/plain,application/epub+zip',
+    formatLabel: 'How chapters are found',
+    format: 'EPUB: each section of the book.\nText: headings such as 第一章 or Aozora Bunko 見出し marks; otherwise pages of about 4,000 characters.',
+    other: 'Load the Bible text instead',
+  },
+};
+
+function showImport(mode) {
+  state.importMode = mode;
+  const t = IMPORT_TEXT[mode];
+  $('#import-eyebrow').textContent = t.eyebrow;
+  $('#import-title').textContent = t.title;
+  $('#import-lede').textContent = t.lede;
+  $('#import-sub').textContent = t.sub;
+  $('#import-format-label').textContent = t.formatLabel;
+  $('#import-format').textContent = t.format;
+  $('#import-format').classList.toggle('ja', mode === 'bible');
+  $('#file-input').accept = t.accept;
+  $('#file-input').value = '';
+  $('#import-other').textContent = t.other;
   show('import');
-  $('#import-cancel').hidden = !state.books.length;
+  $('#import-cancel').hidden = !(state.books.length || state.book);
   $('#import-status').hidden = true;
+  document.title = '聖書 Reader';
 }
 
 async function handleFile(file) {
@@ -103,16 +209,29 @@ async function handleFile(file) {
   const st = $('#import-status');
   st.hidden = false; st.className = 'status';
   st.innerHTML = `Reading <strong>${escapeHtml(file.name)}</strong>…<div class="bar"><span></span></div>`;
+  const progress = p => { const b = st.querySelector('.bar span'); if (b) b.style.width = (p * 100).toFixed(0) + '%'; };
+  const persisting = requestPersist(); // ask while the file pick still counts as a user action
   try {
-    const src = await importBible(file, p => { const b = st.querySelector('.bar span'); if (b) b.style.width = (p * 100).toFixed(0) + '%'; });
-    state.books = await getMeta('books'); state.source = src;
-    st.innerHTML = `Loaded ${src.chapters.toLocaleString()} chapters and ${src.verses.toLocaleString()} verses.`;
-    const first = state.books[0];
-    location.hash = store.get('last', null) ? '#/' : `#/read/${first.code}/${first.chapters[0]}`;
+    if (state.importMode === 'book') {
+      const parsed = await parseBookFile(file);
+      const info = await saveBook(parsed, file, progress);
+      state.book = info;
+      st.textContent = `Loaded "${info.title}": ${info.chapters.length} chapters.`;
+      state.libTab = 'BOOK';
+      const lb = lastBook();
+      location.hash = lb && lb.id === info.id ? '#/' : '#/book/0';
+    } else {
+      const src = await importBible(file, progress);
+      state.books = await getMeta('books'); state.source = src;
+      st.textContent = `Loaded ${src.chapters.toLocaleString()} chapters and ${src.verses.toLocaleString()} verses.`;
+      const first = state.books[0];
+      location.hash = lastBible() ? '#/' : `#/read/${first.code}/${first.chapters[0]}`;
+    }
   } catch (e) {
     st.className = 'status error';
     st.textContent = e.message || String(e);
   }
+  await persisting;
 }
 
 function bindImport() {
@@ -122,26 +241,47 @@ function bindImport() {
   drop.addEventListener('dragleave', () => drop.classList.remove('over'));
   drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); handleFile(e.dataTransfer.files[0]); });
   $('#import-cancel').addEventListener('click', () => { location.hash = '#/'; });
+  $('#import-other').addEventListener('click', () => { location.hash = state.importMode === 'bible' ? '#/import-book' : '#/import'; });
 }
 
 // ---------- library ----------
+function continueTarget() {
+  const lb = lastBible(), lk = lastBook();
+  const bibleOk = lb && state.books.some(b => b.code === lb.book);
+  const bookOk = lk && state.book && lk.id === state.book.id && lk.i < state.book.chapters.length;
+  if (bibleOk && (!bookOk || (lb.t || 0) >= (lk.t || 0))) {
+    const bi = bookInfo(lb.book);
+    return { hash: `#/read/${lb.book}/${lb.ch}`, title: `${bi.ja} ${chapterLabelJa(lb.book, lb.ch)}`, sub: `${bi.en} ${lb.ch}` };
+  }
+  if (bookOk) {
+    return { hash: `#/book/${lk.i}`, title: state.book.chapters[lk.i], sub: `${state.book.title} · ${lk.i + 1} of ${state.book.chapters.length}` };
+  }
+  return null;
+}
+
 function renderLibrary() {
-  const last = store.get('last', null);
   const cont = $('#continue');
-  if (last && state.books.some(b => b.code === last.book)) {
-    const bi = bookInfo(last.book);
+  const target = continueTarget();
+  if (target) {
     cont.hidden = false;
     cont.innerHTML = `<button class="continue" type="button" id="continue-btn">
-      <span><span class="c-label">Continue</span><br><span class="c-title ja">${escapeHtml(bi.ja)} ${escapeHtml(chapterLabelJa(last.book, last.ch))}</span><br>
-      <span class="c-sub">${escapeHtml(bi.en)} ${last.ch}</span></span>
+      <span class="c-text"><span class="c-label">Continue</span><br><span class="c-title ja">${escapeHtml(target.title)}</span><br>
+      <span class="c-sub">${escapeHtml(target.sub)}</span></span>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>`;
-    $('#continue-btn').onclick = () => { location.hash = `#/read/${last.book}/${last.ch}`; };
-    if (!state.openBook) { state.openBook = last.book; state.testament = bookInfo(last.book).testament === 'NT' ? 'NT' : 'OT'; }
+    $('#continue-btn').onclick = () => { location.hash = target.hash; };
   } else cont.hidden = true;
 
-  $$('.seg-btn[data-t]').forEach(b => b.classList.toggle('on', b.dataset.t === state.testament));
+  const lb = lastBible();
+  if (!state.openBook && lb) { state.openBook = lb.book; }
+  if (!state.books.length && state.libTab !== 'BOOK') state.libTab = 'BOOK';
+  $('#seg-ot').hidden = $('#seg-nt').hidden = !state.books.length;
+  $$('.seg-btn[data-t]').forEach(b => b.classList.toggle('on', b.dataset.t === state.libTab));
+  $('#book-list').hidden = state.libTab === 'BOOK';
+  $('#book-panel').hidden = state.libTab !== 'BOOK';
+  if (state.libTab === 'BOOK') { renderBookPanel(); return; }
+
   const list = $('#book-list');
-  const books = state.books.filter(b => (bookInfo(b.code).testament === 'NT' ? 'NT' : 'OT') === state.testament);
+  const books = state.books.filter(b => (bookInfo(b.code).testament === 'NT' ? 'NT' : 'OT') === state.libTab);
   list.innerHTML = books.map(b => {
     const bi = bookInfo(b.code);
     const done = b.chapters.filter(c => readSet.has(`${b.code}.${c}`)).length;
@@ -149,7 +289,7 @@ function renderLibrary() {
     const grid = open ? `<div class="ch-grid">${b.chapters.map(c => {
       const cls = ['ch-btn'];
       if (readSet.has(`${b.code}.${c}`)) cls.push('read');
-      if (last && last.book === b.code && last.ch === c) cls.push('current');
+      if (lb && lb.book === b.code && lb.ch === c) cls.push('current');
       return `<button class="${cls.join(' ')}" data-book="${b.code}" data-ch="${c}" type="button">${c}</button>`;
     }).join('')}</div>` : '';
     return `<li><button class="book-row" data-open="${b.code}" type="button" aria-expanded="${open}">
@@ -159,8 +299,34 @@ function renderLibrary() {
   }).join('');
 }
 
+function renderBookPanel() {
+  const panel = $('#book-panel');
+  const b = state.book;
+  if (!b) {
+    panel.innerHTML = `<div class="book-empty">
+      <p class="book-empty-title">No book loaded</p>
+      <p class="hint">Add one Japanese book (EPUB or text) to read alongside the Bible. It gets the same furigana, word lookup and vocabulary list.</p>
+      <a class="btn" href="#/import-book">Load a book</a></div>`;
+    return;
+  }
+  const lk = lastBook();
+  const done = b.chapters.filter((_, i) => readSet.has(`book:${b.id}#${i}`)).length;
+  panel.innerHTML = `<div class="book-card">
+      <p class="book-card-title ja">${escapeHtml(b.title)}</p>
+      ${b.author ? `<p class="book-card-author ja">${escapeHtml(b.author)}</p>` : ''}
+      <p class="hint">${plural(b.chapters.length, 'chapter')} · ${done} read · ${escapeHtml(b.format)}</p>
+    </div>
+    <ol class="toc">${b.chapters.map((t, i) => {
+      const read = readSet.has(`book:${b.id}#${i}`);
+      const cur = lk && lk.id === b.id && lk.i === i;
+      return `<li><a class="toc-row${read ? ' read' : ''}${cur ? ' current' : ''}" href="#/book/${i}">
+        <span class="toc-n">${i + 1}</span><span class="toc-title ja">${escapeHtml(t)}</span>
+        ${read ? '<svg viewBox="0 0 24 24" aria-label="Read"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>' : ''}</a></li>`;
+    }).join('')}</ol>`;
+}
+
 function bindLibrary() {
-  $$('.seg-btn[data-t]').forEach(b => b.addEventListener('click', () => { state.testament = b.dataset.t; renderLibrary(); }));
+  $$('.seg-btn[data-t]').forEach(b => b.addEventListener('click', () => { state.libTab = b.dataset.t; renderLibrary(); }));
   $('#book-list').addEventListener('click', e => {
     const ch = e.target.closest('.ch-btn');
     if (ch) { location.hash = `#/read/${ch.dataset.book}/${ch.dataset.ch}`; return; }
@@ -168,73 +334,114 @@ function bindLibrary() {
     if (row) {
       state.openBook = state.openBook === row.dataset.open ? null : row.dataset.open;
       renderLibrary();
-      const li = row.closest('li');
       const again = $(`[data-open="${row.dataset.open}"]`);
       if (again) again.scrollIntoView({ block: 'nearest' });
-      void li;
     }
   });
 }
 
 // ---------- reader ----------
-function neighbours(book, ch) {
+function bibleNeighbours(code, ch) {
   const flat = [];
   for (const b of state.books) for (const c of b.chapters) flat.push([b.code, c]);
-  const i = flat.findIndex(([b, c]) => b === book && c === ch);
-  return { prev: i > 0 ? flat[i - 1] : null, next: i >= 0 && i < flat.length - 1 ? flat[i + 1] : null };
+  const i = flat.findIndex(([b, c]) => b === code && c === ch);
+  const label = p => (p[0] === code ? `${p[1]}` : `${bookInfo(p[0]).en} ${p[1]}`);
+  const nav = p => p && { hash: `#/read/${p[0]}/${p[1]}`, label: label(p) };
+  return { prev: nav(i > 0 ? flat[i - 1] : null), next: nav(i >= 0 && i < flat.length - 1 ? flat[i + 1] : null) };
 }
 
-function navLabel(pair) {
-  if (!pair) return '';
-  const bi = bookInfo(pair[0]);
-  return pair[0] === state.book ? `${pair[1]}` : `${bi.en} ${pair[1]}`;
-}
+function readKey() { return isBible() ? `${state.code}.${state.ch}` : bookKey(state.ch); }
 
 function updateMarkRead() {
   const btn = $('#mark-read');
-  if (!btn || !state.book) return;
-  const on = readSet.has(`${state.book}.${state.ch}`);
+  if (!btn || !state.kind) return;
+  const on = readSet.has(readKey());
   btn.setAttribute('aria-pressed', String(on));
   btn.querySelector('span').textContent = on ? 'Read' : 'Mark as read';
 }
 
-async function openChapter(book, ch) {
+async function openBibleChapter(code, ch) {
   show('reader');
   const token = ++state.renderToken;
-  const data = await getChapter(book, ch);
+  const data = await getChapter(code, ch);
   if (token !== state.renderToken) return;
   if (!data) { location.replace('#/'); return; }
-  Object.assign(state, { book, ch, chunks: [], analyzed: false, selected: -1, vocab: [] });
-  store.set('last', { book, ch });
-  const bi = bookInfo(book);
-  $('#story-title').innerHTML = `${escapeHtml(bi.ja)} ${escapeHtml(chapterLabelJa(book, ch))}`;
-  $('#story-sub').textContent = `${bi.en} ${ch} · ${data.verses.length} verses`;
-  document.title = `${bi.en} ${ch} · 聖書 Reader`;
+  const bi = bookInfo(code);
+  store.set('lastBible', { book: code, ch, t: Date.now() });
+  state.libTab = bi.testament === 'NT' ? 'NT' : 'OT';
+  state.openBook = code;
+  await openReading(token, {
+    kind: 'bible', code, ch,
+    titleHtml: `${escapeHtml(bi.ja)} ${escapeHtml(chapterLabelJa(code, ch))}`,
+    sub: `${bi.en} ${ch} · ${data.verses.length} verses`,
+    docTitle: `${bi.en} ${ch}`,
+    heroEmpty: `<p class="hero-word">${escapeHtml(bi.ja)}</p><p class="hero-en">${escapeHtml(bi.en)} · Chapter ${ch}</p>`,
+    units: data.verses,
+    ...bibleNeighbours(code, ch),
+  });
+}
+
+async function openBookChapter(i) {
+  show('reader');
+  const token = ++state.renderToken;
+  const b = state.book;
+  const data = b && await getBookChapter(i);
+  if (token !== state.renderToken) return;
+  if (!data) { location.replace('#/'); return; }
+  store.set('lastBook', { id: b.id, i, t: Date.now() });
+  state.libTab = 'BOOK';
+  const n = b.chapters.length;
+  const short = t => (t.length > 14 ? t.slice(0, 13) + '…' : t);
+  await openReading(token, {
+    kind: 'book', code: null, ch: i,
+    titleHtml: escapeHtml(data.title),
+    sub: `${b.title} · ${i + 1} of ${n}`,
+    docTitle: `${b.title} ${i + 1}`,
+    heroEmpty: `<p class="hero-word">${escapeHtml(b.title)}</p><p class="hero-en">${b.author ? `<span class="ja">${escapeHtml(b.author)}</span> · ` : ''}${i + 1} of ${n}</p>`,
+    units: data.paras.map(p => [null, p]),
+    prev: i > 0 ? { hash: `#/book/${i - 1}`, label: short(b.chapters[i - 1]) } : null,
+    next: i < n - 1 ? { hash: `#/book/${i + 1}`, label: short(b.chapters[i + 1]) } : null,
+  });
+}
+
+function unitOpen(label) {
+  return label == null
+    ? '<span class="verse para">'
+    : `<span class="verse" data-v="${label}"><span class="vn">${label}</span>`;
+}
+
+// Shared by the Bible and the book. `units` are [verse number | null, text].
+async function openReading(token, cfg) {
+  Object.assign(state, { kind: cfg.kind, code: cfg.code, ch: cfg.ch, chunks: [], selected: -1, vocab: [], heroEmpty: cfg.heroEmpty });
+  $('#story-title').innerHTML = cfg.titleHtml;
+  $('#story-sub').textContent = cfg.sub;
+  document.title = `${cfg.docTitle} · 聖書 Reader`;
+  $('#view-reader').classList.toggle('is-book', cfg.kind === 'book');
+  $('#back').setAttribute('aria-label', cfg.kind === 'book' ? 'Back to the library' : 'Back to books');
   updateMarkRead();
-  const { prev, next } = neighbours(book, ch);
   const pb = $('#prev-ch'), nb = $('#next-ch');
-  pb.hidden = !prev; nb.hidden = !next;
-  pb.querySelector('span').textContent = navLabel(prev);
-  nb.querySelector('span').textContent = navLabel(next);
-  pb.onclick = () => prev && (location.hash = `#/read/${prev[0]}/${prev[1]}`);
-  nb.onclick = () => next && (location.hash = `#/read/${next[0]}/${next[1]}`);
+  pb.hidden = !cfg.prev; nb.hidden = !cfg.next;
+  pb.querySelector('span').textContent = cfg.prev ? cfg.prev.label : '';
+  nb.querySelector('span').textContent = cfg.next ? cfg.next.label : '';
+  pb.onclick = () => cfg.prev && (location.hash = cfg.prev.hash);
+  nb.onclick = () => cfg.next && (location.hash = cfg.next.hash);
   setTab('story');
   $('#scroller').scrollTop = 0;
-  renderHeroEmpty(data);
+  renderHeroEmpty();
 
   // plain text first, so reading can start before the analyzer is ready
-  $('#text').innerHTML = data.verses.map(([v, t]) => `<span class="verse" data-v="${v}"><span class="vn">${v}</span>${escapeHtml(t)}</span>`).join('');
+  $('#text').innerHTML = cfg.units.map(([v, t]) => `${unitOpen(v)}${escapeHtml(t)}</span>`).join('');
   $('#vocab-count').textContent = '';
   $('#vocab-list').innerHTML = '<li class="empty">Preparing the word list…</li>';
 
   const note = $('#analyzer-note');
-  let slow = setTimeout(() => {
+  const slow = setTimeout(() => {
     note.hidden = false;
     note.textContent = 'Loading the word analyzer. The first time, this downloads about 18 MB; after that it opens from this device.';
   }, 400);
   try {
     await Promise.all([initTokenizer(), initIvs()]);
-  } catch (e) {
+  } catch {
     clearTimeout(slow);
     note.hidden = false;
     note.textContent = 'The word analyzer could not load, so words can\'t be selected yet. Check the connection and reopen the chapter.';
@@ -244,22 +451,24 @@ async function openChapter(book, ch) {
   note.hidden = true;
   if (token !== state.renderToken) return;
 
-  const verses = [];
-  for (const [v, t] of data.verses) verses.push([v, await analyzeVerse(t)]);
-  if (token !== state.renderToken) return;
+  const opts = { bible: cfg.kind === 'bible' };
+  const analyzed = [];
+  for (const [v, t] of cfg.units) {
+    analyzed.push([v, await analyzeVerse(t, opts)]);
+    if (token !== state.renderToken) return;
+  }
   const chunks = [];
   let html = '';
-  for (const [v, cs] of verses) {
-    html += `<span class="verse" data-v="${v}"><span class="vn">${v}</span>`;
+  for (const [v, cs] of analyzed) {
+    html += unitOpen(v);
     for (const c of cs) {
-      c.verse = v;
       if (c.punct) { html += `<span class="p punc">${c.display}</span>`; continue; }
       c.index = chunks.length; chunks.push(c);
       html += `<span class="w" data-i="${c.index}">${c.display}</span>`;
     }
     html += '</span>';
   }
-  state.chunks = chunks; state.analyzed = true;
+  state.chunks = chunks;
   $('#text').innerHTML = html;
   buildVocab(token);
 }
@@ -272,12 +481,14 @@ function setTab(tab) {
 }
 
 // ---------- word card ----------
-function renderHeroEmpty(data) {
-  const bi = bookInfo(state.book);
-  $('#hero').innerHTML = `<div class="hero-empty">
-    <p class="hero-word">${escapeHtml(bi.ja)}</p>
-    <p class="hero-en">${escapeHtml(bi.en)} · ${data ? '' : ''}Chapter ${state.ch}</p>
-    <p class="hint">Tap any word to see its meaning.</p></div>`;
+function renderHeroEmpty() {
+  $('#hero').innerHTML = `<div class="hero-empty">${state.heroEmpty}<p class="hint">Tap any word to see its meaning.</p></div>`;
+}
+
+function clearSelection() {
+  $('.w.sel')?.classList.remove('sel');
+  state.selected = -1;
+  renderHeroEmpty();
 }
 
 function senseHtml(s) {
@@ -287,7 +498,7 @@ function senseHtml(s) {
 
 function headwordFor(entry, key) {
   // a word written in kana stays in kana
-  if (!/[\u3400-\u9FFF]/.test(key) && entry.r && entry.r.includes(key)) return key;
+  if (!/[㐀-鿿]/.test(key) && entry.r && entry.r.includes(key)) return key;
   if (entry.k && entry.k.length) return entry.k.includes(key) ? key : entry.k[0];
   return entry.r[0];
 }
@@ -299,6 +510,7 @@ function readingFor(entry, hint) {
 
 async function lookupChunk(c) {
   if (c._lookup) return c._lookup;
+  const opts = { bible: isBible() };
   c._lookup = (async () => {
     const keys = [];
     if (c.compound) keys.push(c.compound);
@@ -307,16 +519,14 @@ async function lookupChunk(c) {
     if (c.suru && !keys.includes(c.head.surface_form)) keys.push(c.head.surface_form);
     let hint = c.compound ? c.compoundReading : await lemmaReading(c.lemma);
     if (c.lemma === c.head.surface_form && c.head.reading && !c.compound) hint = kataToHira(c.head.reading);
-    const entries = await lookup(keys, hint);
-    // a compound match only counts if it's a real entry for the whole compound
+    const entries = await lookup(keys, hint, opts);
     return { entries, hint, keys };
   })();
   return c._lookup;
 }
 
 async function selectChunk(i, { scroll = false } = {}) {
-  const prev = $('.w.sel');
-  if (prev) prev.classList.remove('sel');
+  $('.w.sel')?.classList.remove('sel');
   state.selected = i;
   const el = $(`.w[data-i="${i}"]`);
   if (!el) return;
@@ -361,10 +571,13 @@ async function selectChunk(i, { scroll = false } = {}) {
       }).join('')}</div>`;
     }
   } else if (c.isName || isKatakanaWord(c.surface)) {
+    const why = isBible()
+      ? 'Katakana words in the Bible are usually names of people or places; the romanization above may help you recognise it.'
+      : 'Katakana words like this are usually names or loanwords; the romanization above may help you recognise it.';
     html = `<p class="hero-word">${c.display}</p>
       <p class="hero-reading">${escapeHtml(toRomaji(c.surface))}</p>
       <div class="chips"><span class="chip">katakana</span>${notes}</div>
-      <p class="hint">Not in the dictionary. Katakana words in the Bible are usually names of people or places; the romanization above may help you recognise it.</p>`;
+      <p class="hint">Not in the dictionary. ${why}</p>`;
   } else {
     html = `<p class="hero-word">${c.display}</p>
       <p class="hero-reading rd-kana"><span class="ja">${escapeHtml(c.reading)}</span></p>
@@ -381,16 +594,12 @@ function bindReader() {
     const w = e.target.closest('.w');
     if (!w) return;
     const i = +w.dataset.i;
-    if (i === state.selected) {
-      w.classList.remove('sel'); state.selected = -1;
-      getChapter(state.book, state.ch).then(renderHeroEmpty);
-      return;
-    }
+    if (i === state.selected) { clearSelection(); return; }
     selectChunk(i);
   });
   $$('.tab').forEach(t => t.addEventListener('click', () => { setTab(t.dataset.tab); $('#scroller').scrollTop = 0; }));
   $('#mark-read').addEventListener('click', () => {
-    const k = `${state.book}.${state.ch}`;
+    const k = readKey();
     if (readSet.has(k)) readSet.delete(k); else readSet.add(k);
     store.set('read', [...readSet]);
     updateMarkRead();
@@ -410,7 +619,7 @@ function bindReader() {
   });
   document.addEventListener('keydown', e => {
     if ($('#view-reader').hidden || $('#settings').open) return;
-    if (e.key === 'Escape' && state.selected >= 0) { $('.w.sel')?.classList.remove('sel'); state.selected = -1; getChapter(state.book, state.ch).then(renderHeroEmpty); }
+    if (e.key === 'Escape' && state.selected >= 0) clearSelection();
   });
 }
 
@@ -427,7 +636,6 @@ async function buildVocab(token) {
   state.vocab = [...groups.values()];
   $('#vocab-count').textContent = state.vocab.length ? `(${state.vocab.length})` : '';
   renderVocab();
-  // look up in small parallel batches
   const queue = state.vocab.slice();
   const work = async () => {
     while (queue.length) {
@@ -437,7 +645,7 @@ async function buildVocab(token) {
       if (g.res.entries[0] && g.res.entries[0].b) g.name = true;
     }
   };
-  let timer = setInterval(() => token === state.renderToken && renderVocab(), 700);
+  const timer = setInterval(() => token === state.renderToken && renderVocab(), 700);
   await Promise.all(Array.from({ length: 4 }, work));
   clearInterval(timer);
   if (token === state.renderToken) renderVocab();
@@ -457,12 +665,12 @@ function renderVocab() {
       const head = headwordFor(e, key);
       const rd = readingFor(e, g.res.hint);
       word = furiText(head, rd);
-      reading = /[㐀-鿿]/.test(head) ? escapeHtml(rd) : (isKatakanaWord(head) ? escapeHtml(toRomaji(head)) : '');
+      reading = /[㐀-鿿]/.test(head) ? `<span class="rd-kana">${escapeHtml(rd)}</span>` : (isKatakanaWord(head) ? escapeHtml(toRomaji(head)) : '');
       gloss = escapeHtml(e.s[0][1].slice(0, 3).join('; '));
       if (e.j) jlpt = `<span class="chip jlpt">N${e.j}</span>`;
     } else {
       word = furiText(c.compound || c.lemma, c.compound ? c.compoundReading : null);
-      gloss = g.res ? (g.name ? 'Name (katakana)' : 'Not in the dictionary') : '…';
+      gloss = g.res ? (g.name ? 'Name or loanword (katakana)' : 'Not in the dictionary') : '…';
       if (isKatakanaWord(c.surface)) reading = escapeHtml(toRomaji(c.surface));
     }
     return `<li class="vocab-item" data-first="${g.first}" tabindex="0">
@@ -477,15 +685,22 @@ async function start() {
   applySettings();
   bindSettings(); bindImport(); bindLibrary(); bindReader();
   matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', applySettings);
-  try { state.books = (await getMeta('books')) || []; state.source = (await getMeta('source')) || null; } catch { state.books = []; }
+  try {
+    state.books = (await getMeta('books')) || [];
+    state.source = (await getMeta('source')) || null;
+    state.book = (await getMeta('book')) || null;
+  } catch { state.books = []; }
+  const lb = lastBible(), lk = lastBook();
+  if (!state.books.length || (lk && state.book && (lk.t || 0) > ((lb && lb.t) || 0))) state.libTab = 'BOOK';
   window.addEventListener('hashchange', route);
   await route();
   initDict().catch(() => {});
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
-  // warm up the analyzer in the background
-  if (state.books.length) setTimeout(() => { initTokenizer().catch(() => {}); initIvs(); }, 300);
+  // Chrome decides without a prompt, based on how much the app is used; Firefox only asks after an import.
+  if ((state.books.length || state.book) && !/firefox/i.test(navigator.userAgent)) requestPersist();
+  if (state.books.length || state.book) setTimeout(() => { initTokenizer().catch(() => {}); initIvs(); }, 300);
 }
 
 start();

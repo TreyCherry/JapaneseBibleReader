@@ -118,6 +118,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   display: grid; gap: 18px; align-content: start;
 }
 .lib-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding-top: env(safe-area-inset-top, 0px); }
+.lib-head .eyebrow { margin-bottom: 4px; }
 .lib-title { margin: 0; font-size: 2.4rem; line-height: 1.9; font-weight: 600; }
 .continue {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px; border: 0; width: 100%;
@@ -127,9 +128,11 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .continue .c-title { font-size: 1.35rem; line-height: 2; }
 .continue .c-sub { color: var(--muted); font-size: 0.9rem; }
 .seg { display: flex; background: var(--surface); border-radius: 14px; padding: 4px; gap: 4px; }
-.seg-btn { flex: 1; border: 0; background: transparent; border-radius: 10px; padding: 0.55em 0.6em; color: var(--muted); font-weight: 500; }
+.seg-btn { flex: 1; min-width: 0; border: 0; background: transparent; border-radius: 10px; padding: 0.55em 0.6em; color: var(--muted); font-weight: 500; }
 .seg-btn.on { background: var(--accent); color: var(--accent-ink); }
 .seg-btn .ja { font-weight: 600; }
+.seg-btn small { display: block; font-size: 0.75rem; line-height: 1.2; margin-top: -2px; opacity: 0.85; }
+.seg-btn:has(small) { display: flex; flex-direction: column; align-items: center; padding-block: 0.3em 0.45em; }
 .seg.small { padding: 3px; }
 .seg.small .seg-btn { padding: 0.35em 0.8em; font-size: 0.9rem; flex: none; }
 .book-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
@@ -207,6 +210,29 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .text { font-size: var(--text-size); line-height: 2.35; overflow-wrap: anywhere; padding-top: 6px; }
 .text .verse { }
 .lines .text .verse { display: block; margin-bottom: 0.15em; }
+.text .para { display: block; text-indent: 1em; margin-bottom: 0.35em; }
+
+/* book tab in the library */
+.book-panel { display: grid; gap: 14px; }
+.book-card { background: linear-gradient(135deg, var(--hero-a), var(--hero-b)); border-radius: 18px; padding: 14px 18px 16px; }
+.book-card-title { margin: 0; font-size: 1.5rem; line-height: 2; font-weight: 600; overflow-wrap: anywhere; }
+.book-card-author { margin: -4px 0 0; color: var(--muted); line-height: 1.9; }
+.book-card .hint { margin-top: 4px; }
+.book-empty { background: var(--surface); border-radius: 18px; padding: 20px 18px; display: grid; gap: 10px; justify-items: start; }
+.book-empty-title { margin: 0; font-weight: 600; font-size: 1.1rem; }
+.book-empty .btn { text-decoration: none; }
+.toc { list-style: none; margin: 0; padding: 0; }
+.toc-row {
+  display: grid; grid-template-columns: 2.6em minmax(0, 1fr) auto; align-items: center; gap: 8px;
+  padding: 4px 4px; border-bottom: 1px solid var(--line); color: var(--fg); text-decoration: none;
+}
+.toc-row:hover { background: var(--accent-soft); }
+.toc-n { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 0.9rem; text-align: right; }
+.toc-title { font-size: 1.1rem; line-height: 2; overflow-wrap: anywhere; }
+.toc-row.read .toc-n, .toc-row svg { color: var(--accent); }
+.toc-row.current { background: var(--accent-soft); border-radius: 10px; }
+.c-text { min-width: 0; overflow-wrap: anywhere; }
+.import-wrap .btn-row { margin-top: 0; }
 .vn {
   font-family: var(--font-ui); font-size: 0.5em; color: var(--accent); font-weight: 700; vertical-align: 0.55em;
   margin: 0 0.25em 0 0.1em; font-variant-numeric: tabular-nums; user-select: none;
